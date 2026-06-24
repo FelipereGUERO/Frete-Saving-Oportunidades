@@ -8,11 +8,16 @@
 #
 # Execução:
 #   streamlit run app.py
+#
+# Logo Parker:
+#   crie a pasta assets na raiz do projeto e salve a imagem como:
+#   assets/parker_logo.png
 # =============================================================================
 
 import io
 import os
 import re
+import unicodedata
 from datetime import datetime
 
 import numpy as np
@@ -40,8 +45,10 @@ PARKER_YELLOW = '#F59E0B'
 PARKER_GREEN = '#16A34A'
 PARKER_WHITE = '#FFFFFF'
 
-# Regras fixas conforme matriz operacional do usuário.
-LIMITE_PESO_COTAR_OBRIGATORIO = 3000.0
+# Regras fixas conforme matriz operacional Parker-Hannifin.
+# O gatilho de 1000 kg foi definido como ponto operacional Parker para cotação dedicada
+# e pode ser calibrado após validação de savings real.
+LIMITE_PESO_COTAR_OBRIGATORIO = 1000.0
 LIMITE_FRETE_COTAR_OBRIGATORIO = 500.0
 LIMITE_PESO_VALOR_COTAR = 1000.0
 LIMITE_VALOR_MERCADORIA_COTAR = 50000.0
@@ -62,60 +69,73 @@ LIMITE_FRETE_KG_MUITO_BAIXO = 0.20
 st.markdown(
     f'''
     <style>
-        .main {{
+        .stApp {{
             background-color: {PARKER_WHITE};
         }}
         .block-container {{
-            padding-top: 1.2rem;
+            padding-top: 1.1rem;
             padding-bottom: 2rem;
         }}
         .parker-header {{
-            background: linear-gradient(90deg, {PARKER_RED} 0%, #8A0018 100%);
-            padding: 1.25rem 1.5rem;
-            border-radius: 14px;
+            background: linear-gradient(120deg, {PARKER_DARK} 0%, #1F2937 42%, {PARKER_RED} 100%);
+            padding: 1.35rem 1.6rem;
+            border-radius: 16px;
             color: white;
             margin-bottom: 1.2rem;
-            box-shadow: 0 6px 18px rgba(17,24,39,0.16);
+            box-shadow: 0 8px 22px rgba(17,24,39,0.18);
+            border: 1px solid rgba(255,255,255,0.12);
         }}
         .parker-header h1 {{
             margin: 0;
             font-size: 2.0rem;
-            font-weight: 800;
-            letter-spacing: -0.02em;
+            font-weight: 850;
+            letter-spacing: -0.03em;
         }}
         .parker-header p {{
             margin: 0.35rem 0 0 0;
             font-size: 1.0rem;
-            opacity: 0.95;
+            opacity: 0.94;
+        }}
+        .logo-fallback {{
+            height:84px;
+            border:1px solid #E5E7EB;
+            border-radius:14px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            color:{PARKER_RED};
+            font-weight:900;
+            background:{PARKER_WHITE};
+            box-shadow: 0 2px 8px rgba(17,24,39,0.05);
         }}
         .rule-card {{
-            border-radius: 12px;
+            border-radius: 14px;
             padding: 1rem;
             border: 1px solid #E5E7EB;
-            background-color: white;
-            min-height: 170px;
-            box-shadow: 0 2px 8px rgba(17,24,39,0.06);
+            background-color: {PARKER_WHITE};
+            min-height: 178px;
+            box-shadow: 0 2px 10px rgba(17,24,39,0.05);
         }}
         .rule-red {{ border-top: 5px solid {PARKER_RED}; }}
         .rule-yellow {{ border-top: 5px solid {PARKER_YELLOW}; }}
         .rule-green {{ border-top: 5px solid {PARKER_GREEN}; }}
         .kpi-card {{
-            background: white;
+            background: {PARKER_WHITE};
             border: 1px solid #E5E7EB;
-            border-radius: 12px;
+            border-radius: 14px;
             padding: 1rem;
-            box-shadow: 0 2px 8px rgba(17,24,39,0.06);
+            box-shadow: 0 2px 10px rgba(17,24,39,0.05);
         }}
         .kpi-label {{
             color: {PARKER_MID_GRAY};
-            font-size: 0.82rem;
-            font-weight: 700;
+            font-size: 0.78rem;
+            font-weight: 800;
             text-transform: uppercase;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.05em;
         }}
         .kpi-value {{
             color: {PARKER_DARK};
-            font-size: 1.45rem;
+            font-size: 1.42rem;
             font-weight: 850;
             margin-top: 0.25rem;
         }}
@@ -155,10 +175,30 @@ st.markdown(
             color: {PARKER_DARK};
             font-weight: 800;
         }}
+        section[data-testid='stSidebar'] {{
+            background: {PARKER_GRAY};
+        }}
         section[data-testid='stSidebar'] h1,
         section[data-testid='stSidebar'] h2,
         section[data-testid='stSidebar'] h3 {{
             color: {PARKER_RED};
+        }}
+        .stButton > button,
+        .stDownloadButton > button {{
+            border-radius: 10px;
+            border: 1px solid {PARKER_RED};
+            color: {PARKER_RED};
+            font-weight: 800;
+        }}
+        .stButton > button[kind='primary'],
+        .stFormSubmitButton > button[kind='primary'] {{
+            background: {PARKER_RED};
+            border-color: {PARKER_RED};
+            color: white;
+            font-weight: 850;
+        }}
+        .stTabs [data-baseweb='tab-highlight'] {{
+            background-color: {PARKER_RED};
         }}
     </style>
     ''',
@@ -205,13 +245,6 @@ def formatar_numero(valor, sufixo=''):
 def converter_numero(valor):
     '''
     Converte números em formatos brasileiros e internacionais para float.
-
-    Exemplos aceitos:
-    - '1.234,56' -> 1234.56
-    - '1234,56'  -> 1234.56
-    - '1,234.56' -> 1234.56
-    - 'USD 5,000.00' -> 5000.0
-    - pandas Series -> Series numérica
     '''
     if isinstance(valor, pd.Series):
         return valor.apply(converter_numero)
@@ -321,6 +354,24 @@ def extrair_estado(texto):
     return ''
 
 
+def normalizar_texto_busca(texto):
+    '''Normaliza texto para busca operacional simples.'''
+    if pd.isna(texto):
+        return ''
+    texto = str(texto).lower().strip()
+    texto = unicodedata.normalize('NFKD', texto).encode('ascii', 'ignore').decode('ascii')
+    texto = re.sub(r'\s+', ' ', texto)
+    return texto
+
+
+def identificar_rota_santos(df):
+    '''Identifica registros com origem ou destino contendo Santos/SP ou Santos para exclusão em massa.'''
+    origem = df['origem'].fillna('').astype(str).apply(normalizar_texto_busca) if 'origem' in df.columns else pd.Series('', index=df.index)
+    destino = df['destino'].fillna('').astype(str).apply(normalizar_texto_busca) if 'destino' in df.columns else pd.Series('', index=df.index)
+    padrao_santos = r'(^|[^a-z])santos([^a-z]|$)|santos\s*/\s*sp'
+    return origem.str.contains(padrao_santos, regex=True, na=False) | destino.str.contains(padrao_santos, regex=True, na=False)
+
+
 def texto_contem(texto, palavras):
     '''Verifica se texto contém qualquer palavra-chave.'''
     if pd.isna(texto):
@@ -411,18 +462,19 @@ def aplicar_regras(df):
     Aplica a matriz fixa Parker-Hannifin para cotação dedicada.
 
     Vermelho / Cotar dedicado obrigatório:
-    - Peso >= 3000 kg; ou
+    - Peso >= 1000 kg; ou
     - Frete fracionado estimado >= USD 500; ou
     - Peso >= 1000 kg e valor da mercadoria >= USD 50000; ou
     - Frete/Venda >= 0,08.
 
     Amarelo / Avaliar dedicado:
-    - Peso entre 500 e 999 kg e frete >= USD 250; ou
+    - Peso entre 500 e 999 kg; ou
+    - Frete fracionado estimado >= USD 250; ou
     - Cliente estratégico/OEM/carga crítica/entrega urgente/exceção operacional.
 
     Verde / Manter fracionado:
-    - Sem gatilhos vermelho/amarelo, especialmente quando peso < 500 kg,
-      frete < USD 250 e frete/venda < 8%, salvo exceção operacional.
+    - Sem gatilhos vermelho/amarelo, especialmente baixo peso, baixo frete e baixo risco,
+      salvo exceção operacional.
     '''
     resultado = df.copy()
 
@@ -480,23 +532,24 @@ def aplicar_regras(df):
         (resultado['percentual_frete_sobre_venda'] >= LIMITE_FRETE_VENDA_COTAR)
     )
 
-    cond_peso_frete_amarelo = (
-        resultado['peso'].notna() & resultado['frete_fracionado'].notna() &
+    cond_peso_amarelo = (
+        resultado['peso'].notna() &
         (resultado['peso'] >= LIMITE_PESO_AVALIAR_MIN) &
-        (resultado['peso'] <= LIMITE_PESO_AVALIAR_MAX) &
-        (resultado['frete_fracionado'] >= LIMITE_FRETE_AVALIAR)
+        (resultado['peso'] <= LIMITE_PESO_AVALIAR_MAX)
     )
+    cond_frete_amarelo = resultado['frete_fracionado'].notna() & (resultado['frete_fracionado'] >= LIMITE_FRETE_AVALIAR)
     cond_excecao_amarelo = resultado['excecao_operacional']
 
-    resultado['regra_peso_3000'] = cond_peso_vermelho
+    resultado['regra_peso_1000'] = cond_peso_vermelho
     resultado['regra_frete_500'] = cond_frete_vermelho
     resultado['regra_peso_1000_valor_50000'] = cond_peso_valor_vermelho
     resultado['regra_frete_venda_8pct'] = cond_frete_venda_vermelho
-    resultado['regra_peso_500_999_frete_250'] = cond_peso_frete_amarelo
+    resultado['regra_peso_500_999'] = cond_peso_amarelo
+    resultado['regra_frete_250'] = cond_frete_amarelo
     resultado['regra_excecao_operacional'] = cond_excecao_amarelo
 
     vermelho = cond_peso_vermelho | cond_frete_vermelho | cond_peso_valor_vermelho | cond_frete_venda_vermelho
-    amarelo = (~vermelho) & (cond_peso_frete_amarelo | cond_excecao_amarelo)
+    amarelo = (~vermelho) & (cond_peso_amarelo | cond_frete_amarelo | cond_excecao_amarelo)
 
     resultado['classificacao'] = np.select(
         [vermelho, amarelo],
@@ -508,16 +561,18 @@ def aplicar_regras(df):
 
     def regras_acionadas_linha(linha):
         regras = []
-        if linha['regra_peso_3000']:
-            regras.append('Peso >= 3000 kg')
+        if linha['regra_peso_1000']:
+            regras.append('Peso >= 1000 kg')
         if linha['regra_frete_500']:
             regras.append('Frete estimado >= USD 500')
         if linha['regra_peso_1000_valor_50000']:
             regras.append('Peso >= 1000 kg e valor mercadoria >= USD 50000')
         if linha['regra_frete_venda_8pct']:
             regras.append('Frete/Venda >= 8%')
-        if linha['regra_peso_500_999_frete_250']:
-            regras.append('Peso 500-999 kg e frete >= USD 250')
+        if linha['regra_peso_500_999']:
+            regras.append('Peso entre 500 e 999 kg')
+        if linha['regra_frete_250']:
+            regras.append('Frete estimado >= USD 250')
         if linha['regra_excecao_operacional']:
             regras.append('Cliente estratégico/OEM/carga crítica/entrega urgente')
         return '; '.join(regras) if regras else 'Sem gatilho operacional'
@@ -558,6 +613,7 @@ def aplicar_regras(df):
     resultado['estado_final'] = resultado['estado'].where(resultado['estado'].str.strip() != '', resultado['destino'].apply(extrair_estado))
     resultado['rota'] = resultado['origem'].fillna('').astype(str).str.strip() + ' → ' + resultado['destino'].fillna('').astype(str).str.strip()
     resultado['rota'] = resultado['rota'].replace(' → ', 'Não informada')
+    resultado['desconsiderado_regra_santos'] = identificar_rota_santos(resultado)
 
     return resultado
 
@@ -568,9 +624,9 @@ def preparar_tabela_exibicao(df):
         'documento', 'data', 'divisao', 'operacao_direcao', 'cliente', 'modalidade', 'status_modal_estimado',
         'transportadora', 'origem', 'destino', 'estado_final', 'valor_mercadoria', 'peso', 'frete_fracionado',
         'frete_dedicado', 'percentual_frete_sobre_venda', 'frete_fracionado_por_kg', 'classificacao',
-        'cor_matriz', 'regras_acionadas', 'oportunidade_nao_realizada', 'oportunidade_ja_dedicado',
-        'economia_potencial', 'percentual_saving', 'origem_calculo_economia', 'explicacao_modal_estimado',
-        'observacoes'
+        'cor_matriz', 'regras_acionadas', 'desconsiderado_regra_santos', 'oportunidade_nao_realizada',
+        'oportunidade_ja_dedicado', 'economia_potencial', 'percentual_saving', 'origem_calculo_economia',
+        'explicacao_modal_estimado', 'observacoes'
     ]
     colunas = [c for c in colunas_preferidas if c in df.columns]
     demais = [c for c in df.columns if c not in colunas]
@@ -654,7 +710,7 @@ def badge_classificacao(classificacao):
 
 def aplicar_filtro_multiselect(df, coluna, rotulo):
     '''Aplica filtro multiselect quando a coluna existir e tiver valores úteis.'''
-    if coluna not in df.columns:
+    if coluna not in df.columns or df.empty:
         return df
     serie = df[coluna].fillna('').astype(str).str.strip()
     valores = sorted([v for v in serie.unique() if v != ''])
@@ -672,23 +728,68 @@ def safe_numeric(series):
     return serie.replace([np.inf, -np.inf], np.nan)
 
 
-def safe_size_column(df, col, default=10):
-    '''Cria série de tamanho sempre positiva e limitada para uso no parâmetro size do Plotly.'''
+def safe_size_column(df, col, default=10, min_size=6, max_size=55):
+    '''Cria série de tamanho positiva e limitada para uso no parâmetro size do Plotly.'''
     if df is None or df.empty or col not in df.columns:
-        return pd.Series(default, index=df.index if df is not None else None, dtype=float)
+        return pd.Series(dtype=float)
+    tamanho = safe_numeric(df[col])
+    tamanho = tamanho.where(tamanho > 0, np.nan).dropna()
+    if tamanho.empty:
+        return pd.Series(dtype=float)
     tamanho = safe_numeric(df[col]).fillna(default)
     tamanho = tamanho.where(tamanho > 0, default)
-    return tamanho.clip(lower=5, upper=60)
+    return tamanho.clip(lower=min_size, upper=max_size)
 
 
-def safe_plot_df(df, required_cols):
+def safe_plot_df(df, required_cols=None):
     '''Retorna cópia segura para gráficos quando o DataFrame e as colunas obrigatórias existem.'''
     if df is None or df.empty:
         return pd.DataFrame()
+    required_cols = required_cols or []
     colunas_necessarias = [col for col in required_cols if col]
     if any(col not in df.columns for col in colunas_necessarias):
         return pd.DataFrame()
     return df.copy()
+
+
+def sanitizar_campos_grafico(df, numeric_cols=None, text_cols=None, required_numeric=None, positive_cols=None):
+    '''Sanitiza campos usados em size, color e hover antes de gerar gráficos Plotly.'''
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df_safe = df.copy()
+    numeric_cols = numeric_cols or []
+    text_cols = text_cols or []
+    required_numeric = required_numeric or []
+    positive_cols = positive_cols or []
+
+    for col in numeric_cols:
+        if col in df_safe.columns:
+            df_safe[col] = safe_numeric(df_safe[col])
+
+    for col in text_cols:
+        if col in df_safe.columns:
+            df_safe[col] = df_safe[col].fillna('').astype(str).replace('', 'Não informada')
+
+    for col in required_numeric:
+        if col in df_safe.columns:
+            df_safe = df_safe[df_safe[col].notna()]
+
+    for col in positive_cols:
+        if col in df_safe.columns:
+            df_safe = df_safe[df_safe[col].notna() & (df_safe[col] > 0)]
+
+    return df_safe.copy()
+
+
+def hover_data_seguro(df, colunas):
+    '''Retorna colunas de hover válidas e sem valores nulos problemáticos.'''
+    hover = []
+    for coluna in colunas:
+        if coluna in df.columns:
+            df[coluna] = df[coluna].fillna('').astype(str).replace('', 'Não informada')
+            hover.append(coluna)
+    return hover
 
 
 # =============================================================================
@@ -697,32 +798,20 @@ def safe_plot_df(df, required_cols):
 
 st.sidebar.title('Parker-Hannifin')
 st.sidebar.caption('Branding e matriz fixa de decisão logística.')
-logo_upload = st.sidebar.file_uploader('Logo opcional (.png/.jpg)', type=['png', 'jpg', 'jpeg'])
 st.sidebar.markdown('---')
 st.sidebar.info(
     'Os parâmetros da regra não são editáveis no aplicativo. A matriz está fixa no código conforme política informada.'
 )
 
 logo_local = 'assets/parker_logo.png'
-logo_source = None
-if logo_upload is not None:
-    logo_source = logo_upload
-elif os.path.exists(logo_local):
-    logo_source = logo_local
+logo_source = logo_local if os.path.exists(logo_local) else None
 
 header_logo, header_text = st.columns([1, 5])
 with header_logo:
     if logo_source is not None:
         st.image(logo_source, use_container_width=True)
     else:
-        st.markdown(
-            f'''
-            <div style='height:84px;border:1px solid #E5E7EB;border-radius:12px;display:flex;align-items:center;justify-content:center;color:{PARKER_RED};font-weight:900;'>
-                PARKER
-            </div>
-            ''',
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div class='logo-fallback'>Parker Hannifin</div>", unsafe_allow_html=True)
 with header_text:
     st.markdown(
         '''
@@ -742,7 +831,7 @@ with st.expander('Matriz fixa de decisão operacional', expanded=True):
             <div class='rule-card rule-red'>
                 <h4>🔴 Cotar dedicado obrigatório</h4>
                 <ul>
-                    <li>Peso >= 3000 kg; ou</li>
+                    <li>Peso >= 1000 kg; ou</li>
                     <li>Frete fracionado estimado >= USD 500; ou</li>
                     <li>Peso >= 1000 kg e valor mercadoria >= USD 50000; ou</li>
                     <li>Frete/Venda >= 8%.</li>
@@ -757,7 +846,8 @@ with st.expander('Matriz fixa de decisão operacional', expanded=True):
             <div class='rule-card rule-yellow'>
                 <h4>🟡 Avaliar dedicado</h4>
                 <ul>
-                    <li>Peso entre 500 e 999 kg e frete >= USD 250; ou</li>
+                    <li>Peso entre 500 e 999 kg; ou</li>
+                    <li>Frete fracionado estimado >= USD 250; ou</li>
                     <li>Cliente estratégico, OEM, carga crítica ou entrega urgente.</li>
                 </ul>
             </div>
@@ -770,15 +860,20 @@ with st.expander('Matriz fixa de decisão operacional', expanded=True):
             <div class='rule-card rule-green'>
                 <h4>🟢 Manter fracionado</h4>
                 <ul>
-                    <li>Peso < 500 kg;</li>
-                    <li>Frete < USD 250;</li>
+                    <li>Baixo peso;</li>
+                    <li>Baixo frete;</li>
                     <li>Frete/Venda < 8%;</li>
-                    <li>Salvo exceção operacional.</li>
+                    <li>Sem exceção operacional.</li>
                 </ul>
             </div>
             ''',
             unsafe_allow_html=True,
         )
+
+st.info(
+    'O limite de **1000 kg** foi definido como gatilho operacional Parker para cotação dedicada. '
+    'Esse parâmetro pode ser calibrado após validação de savings real e nível de serviço.'
+)
 
 
 # =============================================================================
@@ -796,7 +891,8 @@ with tab_manual:
     st.subheader('Simulador Manual de Decisão')
     st.write(
         'Informe os dados disponíveis do embarque. Frete fracionado e frete dedicado são opcionais; '
-        'quando ambos forem preenchidos, o app calcula economia e percentual de saving.'
+        'quando ambos forem preenchidos, o app calcula economia e percentual de saving. '
+        'Peso a partir de 1000 kg aciona cotação dedicada obrigatória conforme gatilho operacional Parker.'
     )
 
     with st.form('form_simulador_manual'):
@@ -895,7 +991,7 @@ with tab_manual:
             kpi_card('Saving', formatar_percentual(saving_manual) if tem_financeiro else 'N/D', 'Exige frete fracionado e dedicado')
 
         if resultado_manual['classificacao'] == 'Cotar dedicado obrigatório':
-            st.error('🔴 **Cotar dedicado obrigatório** — o embarque acionou pelo menos um gatilho vermelho da matriz.')
+            st.error('🔴 **Cotar dedicado obrigatório** — o embarque acionou pelo menos um gatilho vermelho da matriz Parker.')
         elif resultado_manual['classificacao'] == 'Avaliar dedicado':
             st.warning('🟡 **Avaliar dedicado** — existe gatilho amarelo ou exceção operacional que recomenda avaliação.')
         else:
@@ -939,7 +1035,8 @@ with tab_lote:
     st.subheader('Análise em Lote de Histórico de Embarques')
     st.write(
         'Faça upload de um arquivo Excel ou CSV. O aplicativo tenta detectar automaticamente as colunas prováveis '
-        'em português ou inglês, mas permite ajuste manual quando necessário.'
+        'em português ou inglês, mas permite ajuste manual quando necessário. Rotas com origem ou destino contendo '
+        '**Santos/SP** ou **Santos** são desconsideradas automaticamente da análise em massa, KPIs e gráficos de oportunidade.'
     )
 
     arquivo = st.file_uploader('Upload de histórico de embarques (.xlsx, .xls ou .csv)', type=['xlsx', 'xls', 'csv'])
@@ -1034,13 +1131,28 @@ with tab_lote:
 
         if 'df_resultado_lote' in st.session_state:
             df_resultado = st.session_state['df_resultado_lote'].copy()
-            df_exibicao = st.session_state['df_exibicao_lote'].copy()
+
+            regra_santos = df_resultado['desconsiderado_regra_santos'] if 'desconsiderado_regra_santos' in df_resultado.columns else pd.Series(False, index=df_resultado.index)
+            qtd_santos_desconsiderados = int(regra_santos.sum())
+            df_base_analise = df_resultado[~regra_santos].copy()
+
+            st.markdown('### Regra de Exclusão Automática')
+            s1, s2 = st.columns([1, 3])
+            with s1:
+                kpi_card('Registros Santos desconsiderados', f'{qtd_santos_desconsiderados:,}'.replace(',', '.'), 'Origem ou destino Santos/SP ou Santos', PARKER_MID_GRAY)
+            with s2:
+                if qtd_santos_desconsiderados > 0:
+                    st.warning(
+                        f'{qtd_santos_desconsiderados:,} registro(s) foram removidos automaticamente da análise em massa, KPIs e gráficos de oportunidade por regra Santos.'.replace(',', '.')
+                    )
+                else:
+                    st.info('Nenhum registro foi desconsiderado pela regra Santos.')
 
             st.markdown('### Filtros Operacionais')
             with st.expander('Filtrar análise', expanded=True):
                 f1, f2, f3, f4 = st.columns(4)
                 with f1:
-                    df_filtrado = aplicar_filtro_multiselect(df_resultado, 'divisao', 'Divisão')
+                    df_filtrado = aplicar_filtro_multiselect(df_base_analise, 'divisao', 'Divisão')
                     df_filtrado = aplicar_filtro_multiselect(df_filtrado, 'operacao_direcao', 'Operação / Direção')
                 with f2:
                     df_filtrado = aplicar_filtro_multiselect(df_filtrado, 'transportadora', 'Transportadora')
@@ -1062,26 +1174,28 @@ with tab_lote:
                             (df_filtrado['data_convertida'].dt.date >= inicio) &
                             (df_filtrado['data_convertida'].dt.date <= fim)
                         ]
+
             df_exibicao_filtrado = preparar_tabela_exibicao(df_filtrado)
 
-            oportunidades = df_filtrado[df_filtrado['oportunidade_dedicado']].copy()
-            oportunidades_nao_realizadas = df_filtrado[df_filtrado['oportunidade_nao_realizada']].copy()
-            oportunidades_ja_dedicado = df_filtrado[df_filtrado['oportunidade_ja_dedicado']].copy()
+            oportunidades = df_filtrado[df_filtrado['oportunidade_dedicado']].copy() if 'oportunidade_dedicado' in df_filtrado.columns else pd.DataFrame()
+            oportunidades_nao_realizadas = df_filtrado[df_filtrado['oportunidade_nao_realizada']].copy() if 'oportunidade_nao_realizada' in df_filtrado.columns else pd.DataFrame()
+            oportunidades_ja_dedicado = df_filtrado[df_filtrado['oportunidade_ja_dedicado']].copy() if 'oportunidade_ja_dedicado' in df_filtrado.columns else pd.DataFrame()
             df_oportunidades_exibicao = preparar_tabela_exibicao(oportunidades).sort_values(
-                by=['cor_matriz', 'economia_potencial', 'frete_fracionado', 'valor_mercadoria'],
-                ascending=[False, False, False, False],
-            )
+                by=[c for c in ['cor_matriz', 'economia_potencial', 'frete_fracionado', 'valor_mercadoria'] if c in oportunidades.columns],
+                ascending=False,
+            ) if not oportunidades.empty else pd.DataFrame()
 
             total_analisado = len(df_filtrado)
-            provavel_fracionado = int(df_filtrado['provavel_fracionado'].sum())
-            provavel_dedicado = int(df_filtrado['provavel_dedicado'].sum())
-            qtd_oportunidades_nao_realizadas = int(df_filtrado['oportunidade_nao_realizada'].sum())
-            qtd_oportunidades_ja_dedicado = int(df_filtrado['oportunidade_ja_dedicado'].sum())
-            gasto_fracionado_oportunidade = float(oportunidades_nao_realizadas['frete_fracionado'].sum(skipna=True))
-            economia_potencial_total = float(oportunidades_nao_realizadas['economia_potencial'].sum(skipna=True))
+            provavel_fracionado = int(df_filtrado['provavel_fracionado'].sum()) if 'provavel_fracionado' in df_filtrado.columns else 0
+            provavel_dedicado = int(df_filtrado['provavel_dedicado'].sum()) if 'provavel_dedicado' in df_filtrado.columns else 0
+            qtd_oportunidades_nao_realizadas = int(df_filtrado['oportunidade_nao_realizada'].sum()) if 'oportunidade_nao_realizada' in df_filtrado.columns else 0
+            qtd_oportunidades_ja_dedicado = int(df_filtrado['oportunidade_ja_dedicado'].sum()) if 'oportunidade_ja_dedicado' in df_filtrado.columns else 0
+            gasto_fracionado_oportunidade = float(safe_numeric(oportunidades_nao_realizadas['frete_fracionado']).sum(skipna=True)) if not oportunidades_nao_realizadas.empty and 'frete_fracionado' in oportunidades_nao_realizadas.columns else 0.0
+            economia_potencial_total = float(safe_numeric(oportunidades_nao_realizadas['economia_potencial']).sum(skipna=True)) if not oportunidades_nao_realizadas.empty and 'economia_potencial' in oportunidades_nao_realizadas.columns else 0.0
 
             resumo = {
                 'total_analisado': total_analisado,
+                'registros_desconsiderados_regra_santos': qtd_santos_desconsiderados,
                 'provavel_fracionado': provavel_fracionado,
                 'provavel_dedicado': provavel_dedicado,
                 'oportunidades_em_provavel_fracionado': qtd_oportunidades_nao_realizadas,
@@ -1096,7 +1210,7 @@ with tab_lote:
             st.markdown('### KPIs da Análise')
             k1, k2, k3, k4 = st.columns(4)
             with k1:
-                kpi_card('Total analisado', f'{total_analisado:,}'.replace(',', '.'), 'Após filtros aplicados')
+                kpi_card('Total analisado', f'{total_analisado:,}'.replace(',', '.'), 'Após filtros e exclusão Santos')
             with k2:
                 kpi_card('Provável fracionado', f'{provavel_fracionado:,}'.replace(',', '.'), 'Base elegível para oportunidade não realizada', PARKER_MID_GRAY)
             with k3:
@@ -1130,6 +1244,7 @@ with tab_lote:
                 with g1:
                     df_pie_base = safe_plot_df(df_filtrado, ['classificacao'])
                     if not df_pie_base.empty:
+                        df_pie_base = sanitizar_campos_grafico(df_pie_base, text_cols=['classificacao'])
                         df_classificacao = (
                             df_pie_base.groupby('classificacao', dropna=False)
                             .size()
@@ -1162,9 +1277,9 @@ with tab_lote:
                 with g2:
                     df_div_base = safe_plot_df(oportunidades_nao_realizadas, ['divisao'])
                     if not df_div_base.empty:
+                        df_div_base = sanitizar_campos_grafico(df_div_base, text_cols=['divisao'])
                         df_div = (
-                            df_div_base.assign(divisao=df_div_base['divisao'].replace('', 'Não informada'))
-                            .groupby('divisao')
+                            df_div_base.groupby('divisao')
                             .size()
                             .reset_index(name='oportunidades')
                             .sort_values('oportunidades', ascending=False)
@@ -1184,9 +1299,9 @@ with tab_lote:
                 with g3:
                     df_transp_base = safe_plot_df(oportunidades_nao_realizadas, ['transportadora'])
                     if not df_transp_base.empty:
+                        df_transp_base = sanitizar_campos_grafico(df_transp_base, text_cols=['transportadora'])
                         df_transp = (
-                            df_transp_base.assign(transportadora=df_transp_base['transportadora'].replace('', 'Não informada'))
-                            .groupby('transportadora')
+                            df_transp_base.groupby('transportadora')
                             .size()
                             .reset_index(name='oportunidades')
                             .sort_values('oportunidades', ascending=False)
@@ -1204,6 +1319,7 @@ with tab_lote:
                 with g4:
                     df_origem_destino_base = safe_plot_df(oportunidades_nao_realizadas, ['origem', 'destino'])
                     if not df_origem_destino_base.empty:
+                        df_origem_destino_base = sanitizar_campos_grafico(df_origem_destino_base, text_cols=['origem', 'destino'])
                         df_origem_destino = (
                             df_origem_destino_base.groupby(['origem', 'destino'], dropna=False)
                             .size()
@@ -1214,7 +1330,7 @@ with tab_lote:
                         df_origem_destino['oportunidades'] = safe_numeric(df_origem_destino['oportunidades']).fillna(0)
                         df_origem_destino = df_origem_destino[df_origem_destino['oportunidades'] > 0]
                         if not df_origem_destino.empty:
-                            df_origem_destino['origem_destino'] = df_origem_destino['origem'].replace('', 'Não informada') + ' → ' + df_origem_destino['destino'].replace('', 'Não informada')
+                            df_origem_destino['origem_destino'] = df_origem_destino['origem'] + ' → ' + df_origem_destino['destino']
                             fig = px.bar(df_origem_destino, x='oportunidades', y='origem_destino', orientation='h', title='Oportunidades por origem/destino', color_discrete_sequence=[PARKER_RED])
                             st.plotly_chart(fig, use_container_width=True)
                         else:
@@ -1227,8 +1343,7 @@ with tab_lote:
                 with d1:
                     df_hist_peso = safe_plot_df(df_filtrado, ['peso', 'classificacao'])
                     if not df_hist_peso.empty:
-                        df_hist_peso['peso'] = safe_numeric(df_hist_peso['peso'])
-                        df_hist_peso = df_hist_peso.dropna(subset=['peso'])
+                        df_hist_peso = sanitizar_campos_grafico(df_hist_peso, numeric_cols=['peso'], text_cols=['classificacao'], required_numeric=['peso'])
                         if not df_hist_peso.empty:
                             fig = px.histogram(df_hist_peso, x='peso', nbins=30, title='Distribuição por peso', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
                             st.plotly_chart(fig, use_container_width=True)
@@ -1239,8 +1354,7 @@ with tab_lote:
                 with d2:
                     df_hist_valor = safe_plot_df(df_filtrado, ['valor_mercadoria', 'classificacao'])
                     if not df_hist_valor.empty:
-                        df_hist_valor['valor_mercadoria'] = safe_numeric(df_hist_valor['valor_mercadoria'])
-                        df_hist_valor = df_hist_valor.dropna(subset=['valor_mercadoria'])
+                        df_hist_valor = sanitizar_campos_grafico(df_hist_valor, numeric_cols=['valor_mercadoria'], text_cols=['classificacao'], required_numeric=['valor_mercadoria'])
                         if not df_hist_valor.empty:
                             fig = px.histogram(df_hist_valor, x='valor_mercadoria', nbins=30, title='Distribuição por valor de mercadoria', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
                             st.plotly_chart(fig, use_container_width=True)
@@ -1251,8 +1365,7 @@ with tab_lote:
                 with d3:
                     df_hist_frete = safe_plot_df(df_filtrado, ['frete_fracionado', 'classificacao'])
                     if not df_hist_frete.empty:
-                        df_hist_frete['frete_fracionado'] = safe_numeric(df_hist_frete['frete_fracionado'])
-                        df_hist_frete = df_hist_frete.dropna(subset=['frete_fracionado'])
+                        df_hist_frete = sanitizar_campos_grafico(df_hist_frete, numeric_cols=['frete_fracionado'], text_cols=['classificacao'], required_numeric=['frete_fracionado'])
                         if not df_hist_frete.empty:
                             fig = px.histogram(df_hist_frete, x='frete_fracionado', nbins=30, title='Distribuição por frete estimado', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
                             st.plotly_chart(fig, use_container_width=True)
@@ -1264,26 +1377,32 @@ with tab_lote:
             with graf_tab3:
                 df_scatter = safe_plot_df(df_filtrado, ['peso', 'valor_mercadoria'])
                 if not df_scatter.empty:
-                    df_scatter['peso'] = pd.to_numeric(df_scatter['peso'], errors='coerce').replace([np.inf, -np.inf], np.nan)
-                    df_scatter['valor_mercadoria'] = pd.to_numeric(df_scatter['valor_mercadoria'], errors='coerce').replace([np.inf, -np.inf], np.nan)
-                    if 'frete_fracionado' in df_scatter.columns:
-                        df_scatter['frete_fracionado'] = pd.to_numeric(df_scatter['frete_fracionado'], errors='coerce').replace([np.inf, -np.inf], np.nan)
-                    else:
-                        df_scatter['frete_fracionado'] = np.nan
-                    df_scatter = df_scatter.dropna(subset=['peso', 'valor_mercadoria'])
-                    df_scatter['_plot_size'] = safe_size_column(df_scatter, 'frete_fracionado', default=10)
-                    df_scatter = df_scatter[df_scatter['_plot_size'].notna() & (df_scatter['_plot_size'] > 0)]
+                    df_scatter = sanitizar_campos_grafico(
+                        df_scatter,
+                        numeric_cols=['peso', 'valor_mercadoria', 'frete_fracionado', 'economia_potencial', 'percentual_saving'],
+                        text_cols=['classificacao', 'documento', 'transportadora', 'origem', 'destino', 'regras_acionadas', 'status_modal_estimado'],
+                        required_numeric=['peso', 'valor_mercadoria'],
+                        positive_cols=['peso', 'valor_mercadoria'],
+                    )
                     if not df_scatter.empty:
-                        hover_data = [
-                            coluna for coluna in ['documento', 'transportadora', 'origem', 'destino', 'regras_acionadas', 'status_modal_estimado']
-                            if coluna in df_scatter.columns
-                        ]
+                        hover_data = hover_data_seguro(
+                            df_scatter,
+                            ['documento', 'transportadora', 'origem', 'destino', 'regras_acionadas', 'status_modal_estimado']
+                        )
+                        size_series = safe_size_column(df_scatter, 'frete_fracionado', default=12)
+                        if not size_series.empty and len(size_series) == len(df_scatter):
+                            df_scatter['_plot_size'] = size_series.values
+                            size_col = '_plot_size'
+                        else:
+                            size_col = None
+
+                        color_col = 'classificacao' if 'classificacao' in df_scatter.columns else None
                         fig = px.scatter(
                             df_scatter,
                             x='peso',
                             y='valor_mercadoria',
-                            size='_plot_size',
-                            color='classificacao' if 'classificacao' in df_scatter.columns else None,
+                            size=size_col,
+                            color=color_col,
                             hover_data=hover_data,
                             title='Matriz peso versus valor da mercadoria',
                             color_discrete_map={
@@ -1293,7 +1412,6 @@ with tab_lote:
                             },
                         )
                         fig.add_vline(x=LIMITE_PESO_COTAR_OBRIGATORIO, line_dash='dash', line_color=PARKER_RED)
-                        fig.add_vline(x=LIMITE_PESO_VALOR_COTAR, line_dash='dot', line_color=PARKER_YELLOW)
                         fig.add_hline(y=LIMITE_VALOR_MERCADORIA_COTAR, line_dash='dot', line_color=PARKER_YELLOW)
                         st.plotly_chart(fig, use_container_width=True)
                     else:
@@ -1306,8 +1424,13 @@ with tab_lote:
                 with r1:
                     df_rotas_base = safe_plot_df(oportunidades_nao_realizadas, ['rota', 'economia_potencial', 'frete_fracionado'])
                     if not df_rotas_base.empty:
-                        df_rotas_base['economia_potencial'] = safe_numeric(df_rotas_base['economia_potencial']).fillna(0)
-                        df_rotas_base['frete_fracionado'] = safe_numeric(df_rotas_base['frete_fracionado']).fillna(0)
+                        df_rotas_base = sanitizar_campos_grafico(
+                            df_rotas_base,
+                            numeric_cols=['economia_potencial', 'frete_fracionado'],
+                            text_cols=['rota'],
+                        )
+                        df_rotas_base['economia_potencial'] = df_rotas_base['economia_potencial'].fillna(0)
+                        df_rotas_base['frete_fracionado'] = df_rotas_base['frete_fracionado'].fillna(0)
                         df_rotas = (
                             df_rotas_base.groupby('rota', dropna=False)
                             .agg(oportunidades=('rota', 'size'), economia=('economia_potencial', 'sum'), gasto=('frete_fracionado', 'sum'))
@@ -1328,8 +1451,13 @@ with tab_lote:
                 with r2:
                     df_savings = safe_plot_df(oportunidades_nao_realizadas, ['economia_potencial'])
                     if not df_savings.empty:
-                        df_savings['economia_potencial'] = safe_numeric(df_savings['economia_potencial'])
-                        df_savings = df_savings[df_savings['economia_potencial'] > 0].copy()
+                        df_savings = sanitizar_campos_grafico(
+                            df_savings,
+                            numeric_cols=['economia_potencial', 'percentual_saving', 'frete_fracionado'],
+                            text_cols=['documento', 'origem_calculo_economia'],
+                            required_numeric=['economia_potencial'],
+                            positive_cols=['economia_potencial'],
+                        )
                         if not df_savings.empty:
                             if 'documento' in df_savings.columns:
                                 df_savings['documento_plot'] = df_savings['documento'].replace('', np.nan).fillna('Sem documento')
@@ -1348,7 +1476,7 @@ with tab_lote:
                             )
                             st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.info('Ranking de savings disponível somente quando houver frete informado ou simulação ativa.')
+                            st.info('Ranking de savings disponível somente quando houver economia positiva após limpeza dos dados.')
                     else:
                         st.info('Ranking de savings disponível somente quando houver frete informado ou simulação ativa.')
 
@@ -1365,8 +1493,8 @@ with tab_lote:
                         'frete_fracionado': st.column_config.NumberColumn('Frete estimado/fracionado', format='USD %.2f'),
                         'frete_dedicado': st.column_config.NumberColumn('Frete dedicado', format='USD %.2f'),
                         'economia_potencial': st.column_config.NumberColumn('Economia potencial', format='USD %.2f'),
-                        'percentual_frete_sobre_venda': st.column_config.NumberColumn('Frete/Venda', format='%.2f%%'),
-                        'percentual_saving': st.column_config.NumberColumn('Saving', format='%.2f%%'),
+                        'percentual_frete_sobre_venda': st.column_config.NumberColumn('Frete/Venda', format='%.2f'),
+                        'percentual_saving': st.column_config.NumberColumn('Saving', format='%.2f'),
                         'frete_fracionado_por_kg': st.column_config.NumberColumn('USD/kg', format='USD %.2f'),
                     },
                 )
@@ -1401,6 +1529,10 @@ with tab_lote:
 
             with st.expander('Ver análise completa filtrada', expanded=False):
                 st.dataframe(df_exibicao_filtrado, use_container_width=True, hide_index=True)
+
+            if qtd_santos_desconsiderados > 0:
+                with st.expander('Ver registros desconsiderados pela regra Santos', expanded=False):
+                    st.dataframe(preparar_tabela_exibicao(df_resultado[regra_santos].copy()), use_container_width=True, hide_index=True)
 
     elif arquivo is not None:
         st.warning('O arquivo foi carregado, mas não possui dados para análise.')
