@@ -666,6 +666,31 @@ def aplicar_filtro_multiselect(df, coluna, rotulo):
     return df
 
 
+def safe_numeric(series):
+    '''Converte série para numérico, removendo infinitos para uso seguro em gráficos.'''
+    serie = pd.to_numeric(series, errors='coerce')
+    return serie.replace([np.inf, -np.inf], np.nan)
+
+
+def safe_size_column(df, col, default=10):
+    '''Cria série de tamanho sempre positiva e limitada para uso no parâmetro size do Plotly.'''
+    if df is None or df.empty or col not in df.columns:
+        return pd.Series(default, index=df.index if df is not None else None, dtype=float)
+    tamanho = safe_numeric(df[col]).fillna(default)
+    tamanho = tamanho.where(tamanho > 0, default)
+    return tamanho.clip(lower=5, upper=60)
+
+
+def safe_plot_df(df, required_cols):
+    '''Retorna cópia segura para gráficos quando o DataFrame e as colunas obrigatórias existem.'''
+    if df is None or df.empty:
+        return pd.DataFrame()
+    colunas_necessarias = [col for col in required_cols if col]
+    if any(col not in df.columns for col in colunas_necessarias):
+        return pd.DataFrame()
+    return df.copy()
+
+
 # =============================================================================
 # Cabeçalho corporativo e sidebar informativa
 # =============================================================================
@@ -1103,134 +1128,227 @@ with tab_lote:
             with graf_tab1:
                 g1, g2 = st.columns(2)
                 with g1:
-                    df_classificacao = (
-                        df_filtrado.groupby('classificacao', dropna=False)
-                        .size()
-                        .reset_index(name='quantidade')
-                        .sort_values('quantidade', ascending=False)
-                    )
-                    fig = px.pie(
-                        df_classificacao,
-                        names='classificacao',
-                        values='quantidade',
-                        title='Distribuição por recomendação operacional',
-                        color='classificacao',
-                        color_discrete_map={
-                            'Cotar dedicado obrigatório': PARKER_RED,
-                            'Avaliar dedicado': PARKER_YELLOW,
-                            'Manter fracionado': PARKER_GREEN,
-                        },
-                        hole=0.35,
-                    )
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig, use_container_width=True)
+                    df_pie_base = safe_plot_df(df_filtrado, ['classificacao'])
+                    if not df_pie_base.empty:
+                        df_classificacao = (
+                            df_pie_base.groupby('classificacao', dropna=False)
+                            .size()
+                            .reset_index(name='quantidade')
+                            .sort_values('quantidade', ascending=False)
+                        )
+                        df_classificacao['quantidade'] = safe_numeric(df_classificacao['quantidade']).fillna(0)
+                        df_classificacao = df_classificacao[df_classificacao['quantidade'] > 0]
+                        if not df_classificacao.empty:
+                            fig = px.pie(
+                                df_classificacao,
+                                names='classificacao',
+                                values='quantidade',
+                                title='Distribuição por recomendação operacional',
+                                color='classificacao',
+                                color_discrete_map={
+                                    'Cotar dedicado obrigatório': PARKER_RED,
+                                    'Avaliar dedicado': PARKER_YELLOW,
+                                    'Manter fracionado': PARKER_GREEN,
+                                },
+                                hole=0.35,
+                            )
+                            fig.update_traces(textposition='inside', textinfo='percent+label')
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem dados válidos de classificação para exibir.')
+                    else:
+                        st.info('Sem dados de classificação para exibir.')
 
                 with g2:
-                    if 'divisao' in oportunidades_nao_realizadas.columns and not oportunidades_nao_realizadas.empty:
+                    df_div_base = safe_plot_df(oportunidades_nao_realizadas, ['divisao'])
+                    if not df_div_base.empty:
                         df_div = (
-                            oportunidades_nao_realizadas.assign(divisao=oportunidades_nao_realizadas['divisao'].replace('', 'Não informada'))
+                            df_div_base.assign(divisao=df_div_base['divisao'].replace('', 'Não informada'))
                             .groupby('divisao')
                             .size()
                             .reset_index(name='oportunidades')
                             .sort_values('oportunidades', ascending=False)
                             .head(15)
                         )
-                        fig = px.bar(df_div, x='divisao', y='oportunidades', title='Oportunidades por divisão', color_discrete_sequence=[PARKER_RED])
-                        st.plotly_chart(fig, use_container_width=True)
+                        df_div['oportunidades'] = safe_numeric(df_div['oportunidades']).fillna(0)
+                        df_div = df_div[df_div['oportunidades'] > 0]
+                        if not df_div.empty:
+                            fig = px.bar(df_div, x='divisao', y='oportunidades', title='Oportunidades por divisão', color_discrete_sequence=[PARKER_RED])
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem oportunidades por divisão para exibir.')
                     else:
                         st.info('Sem oportunidades por divisão para exibir.')
 
                 g3, g4 = st.columns(2)
                 with g3:
-                    if not oportunidades_nao_realizadas.empty:
+                    df_transp_base = safe_plot_df(oportunidades_nao_realizadas, ['transportadora'])
+                    if not df_transp_base.empty:
                         df_transp = (
-                            oportunidades_nao_realizadas.assign(transportadora=oportunidades_nao_realizadas['transportadora'].replace('', 'Não informada'))
+                            df_transp_base.assign(transportadora=df_transp_base['transportadora'].replace('', 'Não informada'))
                             .groupby('transportadora')
                             .size()
                             .reset_index(name='oportunidades')
                             .sort_values('oportunidades', ascending=False)
                             .head(15)
                         )
-                        fig = px.bar(df_transp, x='oportunidades', y='transportadora', orientation='h', title='Oportunidades por transportadora', color_discrete_sequence=[PARKER_RED])
-                        st.plotly_chart(fig, use_container_width=True)
+                        df_transp['oportunidades'] = safe_numeric(df_transp['oportunidades']).fillna(0)
+                        df_transp = df_transp[df_transp['oportunidades'] > 0]
+                        if not df_transp.empty:
+                            fig = px.bar(df_transp, x='oportunidades', y='transportadora', orientation='h', title='Oportunidades por transportadora', color_discrete_sequence=[PARKER_RED])
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem oportunidades por transportadora para exibir.')
                     else:
                         st.info('Sem oportunidades por transportadora para exibir.')
                 with g4:
-                    if not oportunidades_nao_realizadas.empty:
+                    df_origem_destino_base = safe_plot_df(oportunidades_nao_realizadas, ['origem', 'destino'])
+                    if not df_origem_destino_base.empty:
                         df_origem_destino = (
-                            oportunidades_nao_realizadas.groupby(['origem', 'destino'], dropna=False)
+                            df_origem_destino_base.groupby(['origem', 'destino'], dropna=False)
                             .size()
                             .reset_index(name='oportunidades')
                             .sort_values('oportunidades', ascending=False)
                             .head(15)
                         )
-                        df_origem_destino['origem_destino'] = df_origem_destino['origem'].replace('', 'Não informada') + ' → ' + df_origem_destino['destino'].replace('', 'Não informada')
-                        fig = px.bar(df_origem_destino, x='oportunidades', y='origem_destino', orientation='h', title='Oportunidades por origem/destino', color_discrete_sequence=[PARKER_RED])
-                        st.plotly_chart(fig, use_container_width=True)
+                        df_origem_destino['oportunidades'] = safe_numeric(df_origem_destino['oportunidades']).fillna(0)
+                        df_origem_destino = df_origem_destino[df_origem_destino['oportunidades'] > 0]
+                        if not df_origem_destino.empty:
+                            df_origem_destino['origem_destino'] = df_origem_destino['origem'].replace('', 'Não informada') + ' → ' + df_origem_destino['destino'].replace('', 'Não informada')
+                            fig = px.bar(df_origem_destino, x='oportunidades', y='origem_destino', orientation='h', title='Oportunidades por origem/destino', color_discrete_sequence=[PARKER_RED])
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem oportunidades por origem/destino para exibir.')
                     else:
                         st.info('Sem oportunidades por origem/destino para exibir.')
 
             with graf_tab2:
                 d1, d2, d3 = st.columns(3)
                 with d1:
-                    if df_filtrado['peso'].notna().any():
-                        fig = px.histogram(df_filtrado, x='peso', nbins=30, title='Distribuição por peso', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
-                        st.plotly_chart(fig, use_container_width=True)
+                    df_hist_peso = safe_plot_df(df_filtrado, ['peso', 'classificacao'])
+                    if not df_hist_peso.empty:
+                        df_hist_peso['peso'] = safe_numeric(df_hist_peso['peso'])
+                        df_hist_peso = df_hist_peso.dropna(subset=['peso'])
+                        if not df_hist_peso.empty:
+                            fig = px.histogram(df_hist_peso, x='peso', nbins=30, title='Distribuição por peso', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem dados válidos de peso para exibir.')
+                    else:
+                        st.info('Sem dados de peso para exibir.')
                 with d2:
-                    if df_filtrado['valor_mercadoria'].notna().any():
-                        fig = px.histogram(df_filtrado, x='valor_mercadoria', nbins=30, title='Distribuição por valor de mercadoria', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
-                        st.plotly_chart(fig, use_container_width=True)
+                    df_hist_valor = safe_plot_df(df_filtrado, ['valor_mercadoria', 'classificacao'])
+                    if not df_hist_valor.empty:
+                        df_hist_valor['valor_mercadoria'] = safe_numeric(df_hist_valor['valor_mercadoria'])
+                        df_hist_valor = df_hist_valor.dropna(subset=['valor_mercadoria'])
+                        if not df_hist_valor.empty:
+                            fig = px.histogram(df_hist_valor, x='valor_mercadoria', nbins=30, title='Distribuição por valor de mercadoria', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem dados válidos de valor de mercadoria para exibir.')
+                    else:
+                        st.info('Sem dados de valor de mercadoria para exibir.')
                 with d3:
-                    if df_filtrado['frete_fracionado'].notna().any():
-                        fig = px.histogram(df_filtrado, x='frete_fracionado', nbins=30, title='Distribuição por frete estimado', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
-                        st.plotly_chart(fig, use_container_width=True)
+                    df_hist_frete = safe_plot_df(df_filtrado, ['frete_fracionado', 'classificacao'])
+                    if not df_hist_frete.empty:
+                        df_hist_frete['frete_fracionado'] = safe_numeric(df_hist_frete['frete_fracionado'])
+                        df_hist_frete = df_hist_frete.dropna(subset=['frete_fracionado'])
+                        if not df_hist_frete.empty:
+                            fig = px.histogram(df_hist_frete, x='frete_fracionado', nbins=30, title='Distribuição por frete estimado', color='classificacao', color_discrete_map={'Cotar dedicado obrigatório': PARKER_RED, 'Avaliar dedicado': PARKER_YELLOW, 'Manter fracionado': PARKER_GREEN})
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem dados válidos de frete estimado para exibir.')
+                    else:
+                        st.info('Sem dados de frete estimado para exibir.')
 
             with graf_tab3:
-                df_scatter = df_filtrado[df_filtrado['peso'].notna() & df_filtrado['valor_mercadoria'].notna()].copy()
+                df_scatter = safe_plot_df(df_filtrado, ['peso', 'valor_mercadoria'])
                 if not df_scatter.empty:
-                    fig = px.scatter(
-                        df_scatter,
-                        x='peso',
-                        y='valor_mercadoria',
-                        size='frete_fracionado',
-                        color='classificacao',
-                        hover_data=['documento', 'transportadora', 'origem', 'destino', 'regras_acionadas', 'status_modal_estimado'],
-                        title='Matriz peso versus valor da mercadoria',
-                        color_discrete_map={
-                            'Cotar dedicado obrigatório': PARKER_RED,
-                            'Avaliar dedicado': PARKER_YELLOW,
-                            'Manter fracionado': PARKER_GREEN,
-                        },
-                    )
-                    fig.add_vline(x=LIMITE_PESO_COTAR_OBRIGATORIO, line_dash='dash', line_color=PARKER_RED)
-                    fig.add_vline(x=LIMITE_PESO_VALOR_COTAR, line_dash='dot', line_color=PARKER_YELLOW)
-                    fig.add_hline(y=LIMITE_VALOR_MERCADORIA_COTAR, line_dash='dot', line_color=PARKER_YELLOW)
-                    st.plotly_chart(fig, use_container_width=True)
+                    df_scatter['peso'] = pd.to_numeric(df_scatter['peso'], errors='coerce').replace([np.inf, -np.inf], np.nan)
+                    df_scatter['valor_mercadoria'] = pd.to_numeric(df_scatter['valor_mercadoria'], errors='coerce').replace([np.inf, -np.inf], np.nan)
+                    if 'frete_fracionado' in df_scatter.columns:
+                        df_scatter['frete_fracionado'] = pd.to_numeric(df_scatter['frete_fracionado'], errors='coerce').replace([np.inf, -np.inf], np.nan)
+                    else:
+                        df_scatter['frete_fracionado'] = np.nan
+                    df_scatter = df_scatter.dropna(subset=['peso', 'valor_mercadoria'])
+                    df_scatter['_plot_size'] = safe_size_column(df_scatter, 'frete_fracionado', default=10)
+                    df_scatter = df_scatter[df_scatter['_plot_size'].notna() & (df_scatter['_plot_size'] > 0)]
+                    if not df_scatter.empty:
+                        hover_data = [
+                            coluna for coluna in ['documento', 'transportadora', 'origem', 'destino', 'regras_acionadas', 'status_modal_estimado']
+                            if coluna in df_scatter.columns
+                        ]
+                        fig = px.scatter(
+                            df_scatter,
+                            x='peso',
+                            y='valor_mercadoria',
+                            size='_plot_size',
+                            color='classificacao' if 'classificacao' in df_scatter.columns else None,
+                            hover_data=hover_data,
+                            title='Matriz peso versus valor da mercadoria',
+                            color_discrete_map={
+                                'Cotar dedicado obrigatório': PARKER_RED,
+                                'Avaliar dedicado': PARKER_YELLOW,
+                                'Manter fracionado': PARKER_GREEN,
+                            },
+                        )
+                        fig.add_vline(x=LIMITE_PESO_COTAR_OBRIGATORIO, line_dash='dash', line_color=PARKER_RED)
+                        fig.add_vline(x=LIMITE_PESO_VALOR_COTAR, line_dash='dot', line_color=PARKER_YELLOW)
+                        fig.add_hline(y=LIMITE_VALOR_MERCADORIA_COTAR, line_dash='dot', line_color=PARKER_YELLOW)
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info('Não há peso e valor de mercadoria suficientes para montar a matriz após limpeza dos dados.')
                 else:
                     st.info('Não há peso e valor de mercadoria suficientes para montar a matriz.')
 
             with graf_tab4:
                 r1, r2 = st.columns(2)
                 with r1:
-                    if not oportunidades_nao_realizadas.empty:
+                    df_rotas_base = safe_plot_df(oportunidades_nao_realizadas, ['rota', 'economia_potencial', 'frete_fracionado'])
+                    if not df_rotas_base.empty:
+                        df_rotas_base['economia_potencial'] = safe_numeric(df_rotas_base['economia_potencial']).fillna(0)
+                        df_rotas_base['frete_fracionado'] = safe_numeric(df_rotas_base['frete_fracionado']).fillna(0)
                         df_rotas = (
-                            oportunidades_nao_realizadas.groupby('rota', dropna=False)
-                            .agg(oportunidades=('documento', 'count'), economia=('economia_potencial', 'sum'), gasto=('frete_fracionado', 'sum'))
+                            df_rotas_base.groupby('rota', dropna=False)
+                            .agg(oportunidades=('rota', 'size'), economia=('economia_potencial', 'sum'), gasto=('frete_fracionado', 'sum'))
                             .reset_index()
                             .sort_values(['oportunidades', 'economia'], ascending=False)
                             .head(15)
                         )
-                        fig = px.bar(df_rotas, x='oportunidades', y='rota', orientation='h', title='Top rotas com oportunidade', color='economia', color_continuous_scale=['#FDECEF', PARKER_RED])
-                        st.plotly_chart(fig, use_container_width=True)
+                        df_rotas['oportunidades'] = safe_numeric(df_rotas['oportunidades']).fillna(0)
+                        df_rotas['economia'] = safe_numeric(df_rotas['economia']).fillna(0)
+                        df_rotas = df_rotas[df_rotas['oportunidades'] > 0]
+                        if not df_rotas.empty:
+                            fig = px.bar(df_rotas, x='oportunidades', y='rota', orientation='h', title='Top rotas com oportunidade', color='economia', color_continuous_scale=['#FDECEF', PARKER_RED])
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Sem rotas com oportunidade para exibir.')
                     else:
                         st.info('Sem rotas com oportunidade para exibir.')
                 with r2:
-                    df_savings = oportunidades_nao_realizadas[oportunidades_nao_realizadas['economia_potencial'] > 0].copy()
+                    df_savings = safe_plot_df(oportunidades_nao_realizadas, ['economia_potencial'])
                     if not df_savings.empty:
-                        df_savings['documento_plot'] = df_savings['documento'].replace('', np.nan).fillna('Sem documento')
-                        df_savings = df_savings.sort_values('economia_potencial', ascending=False).head(15)
-                        fig = px.bar(df_savings.sort_values('economia_potencial'), x='economia_potencial', y='documento_plot', orientation='h', title='Ranking de savings', color='origem_calculo_economia', color_discrete_sequence=[PARKER_RED, PARKER_YELLOW, PARKER_GREEN])
-                        st.plotly_chart(fig, use_container_width=True)
+                        df_savings['economia_potencial'] = safe_numeric(df_savings['economia_potencial'])
+                        df_savings = df_savings[df_savings['economia_potencial'] > 0].copy()
+                        if not df_savings.empty:
+                            if 'documento' in df_savings.columns:
+                                df_savings['documento_plot'] = df_savings['documento'].replace('', np.nan).fillna('Sem documento')
+                            else:
+                                df_savings['documento_plot'] = 'Sem documento'
+                            df_savings = df_savings.sort_values('economia_potencial', ascending=False).head(15)
+                            color_col = 'origem_calculo_economia' if 'origem_calculo_economia' in df_savings.columns else None
+                            fig = px.bar(
+                                df_savings.sort_values('economia_potencial'),
+                                x='economia_potencial',
+                                y='documento_plot',
+                                orientation='h',
+                                title='Ranking de savings',
+                                color=color_col,
+                                color_discrete_sequence=[PARKER_RED, PARKER_YELLOW, PARKER_GREEN],
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info('Ranking de savings disponível somente quando houver frete informado ou simulação ativa.')
                     else:
                         st.info('Ranking de savings disponível somente quando houver frete informado ou simulação ativa.')
 
