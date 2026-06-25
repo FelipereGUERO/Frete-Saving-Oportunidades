@@ -47,16 +47,27 @@ PARKER_GREEN = '#16A34A'
 PARKER_WHITE = '#FFFFFF'
 
 # Regras fixas conforme matriz operacional Parker-Hannifin.
-# Na análise em lote, os valores monetários da base permanecem em dólar/US$ conforme solicitado.
-# No simulador manual, os mesmos cálculos são apresentados em moeda brasileira R$.
+# Valores monetários convertidos de USD para BRL usando câmbio fixo de referência.
+# Referência utilizada: USD 1,00 = R$ 5,66.
+TAXA_CAMBIO_USD_BRL = 5.66
+
 LIMITE_PESO_COTAR_OBRIGATORIO = 1000.0
-LIMITE_FRETE_COTAR_OBRIGATORIO = 500.0
+
+# USD 500 x 5,66 = R$ 2.830,00
+LIMITE_FRETE_COTAR_OBRIGATORIO = 2830.0
+
 LIMITE_PESO_VALOR_COTAR = 1000.0
-LIMITE_VALOR_MERCADORIA_COTAR = 50000.0
+
+# USD 50.000 x 5,66 = R$ 283.000,00
+LIMITE_VALOR_MERCADORIA_COTAR = 283000.0
+
 LIMITE_FRETE_VENDA_COTAR = 0.08
+
 LIMITE_PESO_AVALIAR_MIN = 500.0
 LIMITE_PESO_AVALIAR_MAX = 999.0
-LIMITE_FRETE_AVALIAR = 250.0
+
+# USD 250 x 5,66 = R$ 1.415,00
+LIMITE_FRETE_AVALIAR = 1415.0
 
 TAXA_ECONOMIA_SIMULADA_ATIVA = True
 TAXA_ECONOMIA_SIMULADA = 0.15
@@ -506,15 +517,15 @@ def aplicar_regras(df):
         if linha['regra_peso_1000']:
             regras.append('Peso >= 1000 kg')
         if linha['regra_frete_500']:
-            regras.append('Frete estimado >= USD 500')
+            regras.append('Frete estimado >= R$ 2.830,00')
         if linha['regra_peso_1000_valor_50000']:
-            regras.append('Peso >= 1000 kg e valor mercadoria >= USD 50000')
+            regras.append('Peso >= 1000 kg e valor mercadoria >= R$ 283.000,00')
         if linha['regra_frete_venda_8pct']:
             regras.append('Frete/Venda >= 8%')
         if linha['regra_peso_500_999']:
             regras.append('Peso entre 500 e 999 kg')
         if linha['regra_frete_250']:
-            regras.append('Frete estimado >= USD 250')
+            regras.append('Frete estimado >= R$ 1.415,00')
         if linha['regra_excecao_operacional']:
             regras.append('Cliente estratégico/OEM/carga crítica/entrega urgente')
         return '; '.join(regras) if regras else 'Sem gatilho operacional'
@@ -707,10 +718,10 @@ with st.expander('Matriz fixa de decisão operacional', expanded=True):
             <div class='rule-card rule-red'>
                 <h4>🔴 Cotar dedicado obrigatório</h4>
                 <ul>
-                    <li>Peso >= 1000 kg; ou</li>
-                    <li>Frete fracionado estimado >= USD 500; ou</li>
-                    <li>Peso >= 1000 kg e valor mercadoria >= USD 50000; ou</li>
-                    <li>Frete/Venda >= 8%.</li>
+                   <li>Peso >= 1000 kg; ou</li>
+                   <li>Frete fracionado estimado >= R$ 2.830,00; ou</li>
+                <li>Peso >= 1000 kg e valor mercadoria >= R$ 283.000,00; ou</li>
+                <li>Frete/Venda >= 8%.</li>
                 </ul>
             </div>
             ''',
@@ -723,7 +734,7 @@ with st.expander('Matriz fixa de decisão operacional', expanded=True):
                 <h4>🟡 Avaliar dedicado</h4>
                 <ul>
                     <li>Peso entre 500 e 999 kg; ou</li>
-                    <li>Frete fracionado estimado >= USD 250; ou</li>
+                    <li>Frete fracionado estimado >= R$ 1.415,00; ou</li>
                     <li>Cliente estratégico, OEM, carga crítica ou entrega urgente.</li>
                 </ul>
             </div>
